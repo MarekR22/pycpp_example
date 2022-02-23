@@ -31,17 +31,35 @@ struct PyObjectDeleter {
 
 using UniquePyObj = std::unique_ptr<PyObject, PyObjectDeleter>;
 
-UniquePyObj wrapPy(PyObject* p)
+UniquePyObj pyNewRef(PyObject* p)
 {
     return UniquePyObj { p };
 }
 
-UniquePyObj wrapPyOrExit(PyObject* p)
+UniquePyObj pyBorrowRef(PyObject* p)
+{
+    if (p) {
+        Py_INCREF(p);
+    }
+    return pyNewRef(p);
+}
+
+void pyRefNotNullThrow(PyObject* p)
 {
     if (!p) {
         throw PythonError {};
     }
-    return UniquePyObj { p };
+}
+
+UniquePyObj pyNewRefOrThrow(PyObject* p)
+{
+    pyRefNotNullThrow(p);
+    return pyNewRef(p);
+}
+
+UniquePyObj pyBorrowRefOrThrow(PyObject* p)
+{
+    pyRefNotNullThrow(p);
 }
 
 class PyInitGuard {
@@ -51,7 +69,7 @@ public:
         Py_Initialize();
 
         PyObject* sysPath = PySys_GetObject((char*)"path");
-        auto programName = wrapPyOrExit(PyUnicode_FromString("."));
+        auto programName = pyNewRefOrThrow(PyUnicode_FromString("."));
         PyList_Append(sysPath, programName.get());
     }
 
@@ -63,19 +81,17 @@ public:
 
 int callIntFunc(const std::string& proc, int param)
 {
-    auto pModule = wrapPyOrExit(PyImport_ImportModule("PythonCode"));
-    auto pDict = wrapPyOrExit(PyModule_GetDict(pModule.get()));
-    auto pFunc = wrapPyOrExit(PyDict_GetItemString(pDict.get(), proc.c_str()));
+    auto pModule = pyNewRefOrThrow(PyImport_ImportModule("PythonCode"));
+    auto pDict = pyNewRefOrThrow(PyModule_GetDict(pModule.get()));
+    auto pFunc = pyNewRefOrThrow(PyDict_GetItemString(pDict.get(), proc.c_str()));
 
     if (PyCallable_Check(pFunc.get())) {
-        auto pValue = wrapPy(Py_BuildValue("(i)", param));
-        auto pResult = wrapPy(PyObject_CallObject(pFunc.get(), pValue.get())); // this is wrong tuple is expected here
+        auto pValue = pyNewRef(Py_BuildValue("(i)", param));
+        auto pResult = pyNewRef(PyObject_CallObject(pFunc.get(), pValue.get())); // this is wrong tuple is expected here
 
         return _PyLong_AsInt(pResult.get());
     }
-    PyErr_Print();
-
-    return -10;
+    throw PythonError{};
 }
 
 int main()
